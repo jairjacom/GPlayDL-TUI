@@ -37,8 +37,9 @@ DEFAULT_CONFIG = {
     "keystore_pass"  : "",
     "key_pass"       : "",
     "keystore_type"  : "",
-    "sign_apk"       : "off",
-    "auto_install"   : "off",
+    "sign_apk"           : "off",
+    "auto_install"       : "off",
+    "device_profile_path": "",   # empty = disabled, no behaviour change
 }
 
 KEYSTORE_EXTS = (".jks", ".p12", ".pfx")
@@ -855,7 +856,57 @@ def _validate_device_json(path: str) -> dict | None:
     return provider
 
 
-def do_replace_device_profile():
+def reapply_device_profile(cfg: dict) -> bool:
+    """Re-inject the saved device profile after gplaydl token refreshes reset it.
+    Does nothing (returns False silently) when device_profile_path is not set."""
+    profile_path = cfg.get("device_profile_path", "").strip()
+    if not profile_path or not os.path.exists(profile_path):
+        return False
+    if not os.path.exists(GPLAYDL_AUTH):
+        return False
+    if not shutil.which("jq"):
+        return False
+
+    provider = _validate_device_json(profile_path)
+    if provider is None:
+        return False
+
+    tmp_provider = os.path.join(CONFIG_DIR, "tmp_provider.json")
+    tmp_out      = GPLAYDL_AUTH + ".tmp"
+    try:
+        with open(tmp_provider, "w", encoding="utf-8") as fh:
+            json.dump(provider, fh, indent=2)
+
+        jq_cmd = [
+            "jq",
+            "--slurpfile", "new", tmp_provider,
+            ".deviceInfoProvider = $new[0]",
+            GPLAYDL_AUTH,
+        ]
+        with open(tmp_out, "w", encoding="utf-8") as out_fh:
+            result = subprocess.run(
+                jq_cmd, stdout=out_fh, stderr=subprocess.PIPE, text=True
+            )
+
+        if result.returncode != 0:
+            return False
+
+        shutil.move(tmp_out, GPLAYDL_AUTH)
+        new_model = provider.get("properties", {}).get("Build.MODEL", "unknown")
+        tag_info(f"Device profile restored → {col(C.BCYN, new_model)}")
+        return True
+
+    except Exception:
+        return False
+    finally:
+        for f in (tmp_provider, tmp_out):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+
+def do_replace_device_profile(cfg: dict) -> dict:
     banner()
     section_header("Modify Device Profile", "📱")
 
@@ -863,7 +914,7 @@ def do_replace_device_profile():
         tag_err("jq is not installed.")
         tag_warn("Install it with:  pkg install jq")
         pause()
-        return
+        return cfg
 
     if not os.path.exists(GPLAYDL_AUTH):
         tag_err(f"Auth file not found: {GPLAYDL_AUTH}")
@@ -871,7 +922,7 @@ def do_replace_device_profile():
             "Run gplaydl auth at least once to create the auth file."
         )
         pause()
-        return
+        return cfg
 
     print(col(C.BWHT, "  Current auth file:"))
     print(col(C.DIM + C.BCYN, f"    {GPLAYDL_AUTH}"))
@@ -906,19 +957,19 @@ def do_replace_device_profile():
     raw_path = ask("Path to device JSON file").strip()
     if not raw_path:
         tag_warn("No path entered – returning to main menu.")
-        return
+        return cfg
 
     json_path = os.path.expanduser(raw_path)
 
     if not os.path.exists(json_path):
         tag_err(f"File not found: {json_path}")
         pause()
-        return
+        return cfg
 
     provider = _validate_device_json(json_path)
     if provider is None:
         pause()
-        return
+        return cfg
 
     new_model = provider.get("properties", {}).get("Build.MODEL", "unknown")
     new_sdk   = provider.get("sdkVersion", "?")
@@ -937,7 +988,7 @@ def do_replace_device_profile():
     if go == "n":
         tag_info("Cancelled – profile unchanged.")
         pause()
-        return
+        return cfg
 
     backup_path = GPLAYDL_AUTH + ".bak"
     try:
@@ -953,7 +1004,7 @@ def do_replace_device_profile():
     except Exception as exc:
         tag_err(f"Failed to write temp provider file: {exc}")
         pause()
-        return
+        return cfg
 
     tmp_out  = GPLAYDL_AUTH + ".tmp"
     jq_cmd   = [
@@ -983,7 +1034,7 @@ def do_replace_device_profile():
             except Exception:
                 pass
             pause()
-            return
+            return cfg
 
         with open(tmp_out, "r", encoding="utf-8") as fh:
             merged = json.load(fh)
@@ -996,20 +1047,24 @@ def do_replace_device_profile():
         if not written_model:
             tag_err("Merged JSON does not contain deviceInfoProvider.")
             pause()
-            return
+            return cfg
 
         shutil.move(tmp_out, GPLAYDL_AUTH)
 
     except Exception as exc:
         tag_err(f"Unexpected error during merge: {exc}")
         pause()
-        return
+        return cfg
     finally:
         for f in (tmp_provider, tmp_out):
             try:
                 os.remove(f)
             except OSError:
                 pass
+
+    # Save path so it can be auto-restored after future token refreshes
+    cfg["device_profile_path"] = json_path
+    save_config(cfg)
 
     print()
     dline(C.BGRN)
@@ -1020,8 +1075,10 @@ def do_replace_device_profile():
     print(col(C.BCYN, f"  ABI    : {new_abi}"))
     print(col(C.BCYN, f"  File   : {GPLAYDL_AUTH}"))
     print(col(C.DIM + C.BCYN, f"  Backup : {backup_path}"))
+    tag_info("Profile path saved — will auto-restore after token refreshes.")
     dline(C.BGRN)
     pause()
+    return cfg
 
 
 def do_force_reauth(cfg):
@@ -1033,6 +1090,7 @@ def do_force_reauth(cfg):
     tag_info("Credentials cleared.  Starting fresh login…")
     hline()
     run_cmd(["gplaydl"] + build_common_args(cfg) + ["auth"])
+    reapply_device_profile(cfg)   # restore profile after fresh auth
     pause()
 
 
@@ -1049,6 +1107,7 @@ def do_search_download(cfg):
     search_cmd = ["gplaydl"] + build_common_args(cfg) + ["search", query]
     print()
     exit_code, captured = run_search_capture(search_cmd)
+    reapply_device_profile(cfg)   # restore profile if token refresh reset it
     print()
 
     if exit_code != 0:
@@ -1151,6 +1210,7 @@ def do_search_download(cfg):
     print()
 
     dl_code = run_cmd(dl_cmd)
+    reapply_device_profile(cfg)   # restore profile if token refresh reset it
 
     print()
     hline("─", C.DIM + C.CYN)
@@ -1279,7 +1339,7 @@ def do_configure(cfg):
         opt_row(
             "2", "📁", "Output Directory ",
             col(C.BCYN, cfg["output_dir"]
-                or col(C.DIM, "(not set)"))
+                or col(C.DIM, "(not set – uses ~/gplay)"))
         )
         opt_row(
             "3", "🔗", "Dispenser Link   ",
@@ -1463,7 +1523,7 @@ def main_menu(cfg):
         if choice == "1":
             do_search_download(cfg)
         elif choice == "2":
-            do_replace_device_profile()
+            cfg = do_replace_device_profile(cfg)
         elif choice == "3":
             cfg = do_configure(cfg)
         elif choice == "4":
