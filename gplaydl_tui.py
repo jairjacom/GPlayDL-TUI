@@ -30,6 +30,7 @@ DEFAULT_CONFIG = {
     "prefer_split"   : "on",
     "output_dir"     : "",
     "dispenser_link" : "",
+    "account_email"  : "",   # empty = default dispenser pool, set = linked personal account via `gplaydl link`
     "skip_extras"    : "on",
     "arch"           : "",
     "keystore_path"  : "",
@@ -454,6 +455,8 @@ def build_common_args(cfg):
     args = []
     if cfg.get("dispenser_link", "").strip():
         args += ["--dispenser", cfg["dispenser_link"].strip()]
+    if cfg.get("account_email", "").strip():
+        args += ["--email", cfg["account_email"].strip()]
     return args
 
 
@@ -1085,13 +1088,68 @@ def do_force_reauth(cfg):
     banner()
     section_header("Force Re-Authentication", "🔄")
     tag_warn("Clearing stored credentials…")
-    run_silent(["gplaydl"] + build_common_args(cfg) + ["auth", "--clear"])
+    run_silent(["gplaydl", "auth", "--clear"] + build_common_args(cfg))
     print()
     tag_info("Credentials cleared.  Starting fresh login…")
     hline()
-    run_cmd(["gplaydl"] + build_common_args(cfg) + ["auth"])
+    run_cmd(["gplaydl", "auth"] + build_common_args(cfg))
     reapply_device_profile(cfg)   # restore profile after fresh auth
     pause()
+
+
+def do_link_personal_account(cfg):
+    banner()
+    section_header("Link Personal Account", "👤")
+    print(col(C.DIM + C.CYN,
+              "  Links a Google account to gplaydl so downloads use your"))
+    print(col(C.DIM + C.CYN,
+              "  own account instead of the shared default token pool."))
+    print()
+    tag_warn("Google may flag or lock accounts used with unofficial")
+    tag_warn("clients — use a spare account, not your primary one.")
+    print()
+    hline("─", C.CYN)
+    print(col(C.BOLD + C.BWHT, "  Steps:"))
+    print(col(C.BCYN,
+              "  1. Install the gplaydl Authenticator app on any Android"))
+    print(col(C.BCYN,
+              "     phone: github.com/rehmatworks/gplaydl-authenticator"))
+    print(col(C.BCYN, "  2. Sign in with a spare Google account."))
+    print(col(C.BCYN,
+              "  3. Open \"Link gplaydl\" in the app for a one-time code."))
+    hline("─", C.CYN)
+    print()
+
+    code = ask("Enter pairing code (or Enter to cancel)").strip()
+    if not code:
+        tag_warn("Cancelled – no changes made.")
+        pause()
+        return cfg
+
+    print()
+    link_ok = run_cmd(["gplaydl", "link", "--code", code]) == 0
+    print()
+
+    if not link_ok:
+        tag_err("Linking failed – check the code and try again.")
+        pause()
+        return cfg
+
+    email = ask(
+        "Which Google account email did you sign in with in the app?  "
+        "(saved so gplaydl can select this account)",
+        default=cfg.get("account_email", "")
+    ).strip()
+
+    if email:
+        cfg["account_email"] = email
+        save_config(cfg)
+        tag_info(f"Personal account linked and saved → {email}")
+    else:
+        tag_warn("No email entered – account linked, but not set active.")
+        tag_warn("Set it later via Configure → Personal Account.")
+    pause()
+    return cfg
 
 
 def do_search_download(cfg):
@@ -1104,7 +1162,7 @@ def do_search_download(cfg):
         pause()
         return
 
-    search_cmd = ["gplaydl"] + build_common_args(cfg) + ["search", query]
+    search_cmd = ["gplaydl", "search", query] + build_common_args(cfg)
     print()
     exit_code, captured = run_search_capture(search_cmd)
     reapply_device_profile(cfg)   # restore profile if token refresh reset it
@@ -1147,7 +1205,7 @@ def do_search_download(cfg):
 
     section_header(f"App Info  ·  {pkg}", "ℹ")
     hline("─", C.DIM + C.CYN)
-    run_cmd(["gplaydl"] + build_common_args(cfg) + ["info", pkg])
+    run_cmd(["gplaydl", "info", pkg] + build_common_args(cfg))
     hline("─", C.DIM + C.CYN)
 
     print()
@@ -1199,10 +1257,9 @@ def do_search_download(cfg):
 
     dl_after = build_download_args(cfg)
     dl_cmd   = (
-        ["gplaydl"]
-        + build_common_args(cfg)
-        + ["download", "--output", tmp_dir, pkg]
+        ["gplaydl", "download", "--output", tmp_dir, pkg]
         + dl_after
+        + build_common_args(cfg)
     )
 
     section_header(f"Downloading  ·  {pkg}", "⬇")
@@ -1350,7 +1407,6 @@ def do_configure(cfg):
             badge_on_off(cfg["skip_extras"]) +
             col(C.DIM + C.CYN, "  (on = --skip-extras, default)")
         )
-
         arch_label = {
             ""      : col(C.DIM,  "arm64 (gplaydl default, --arch not passed)"),
             "arm64" : col(C.BCYN, "arm64  (explicitly passed)"),
@@ -1383,8 +1439,14 @@ def do_configure(cfg):
                 "  (termux-open --view  after download/sign)")
         )
 
+        opt_row(
+            "9", "👤", "Personal Account ",
+            col(C.BCYN, cfg.get("account_email", "")
+                or col(C.DIM, "(not set – uses default dispenser pool)"))
+        )
+
         hline("─", C.CYN)
-        print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 9 ')}  💾  "
+        print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 10 ')}  💾  "
               f"{col(C.BGRN + C.BOLD, 'Save & Return')}")
         print()
         print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 0 ')}  ↩   "
@@ -1483,6 +1545,18 @@ def do_configure(cfg):
             time.sleep(0.8)
 
         elif choice == "9":
+            print()
+            print(col(C.DIM + C.CYN,
+                      "  Leave blank to use the default dispenser pool."))
+            print(col(C.DIM + C.CYN,
+                      "  New account? Use main menu → Link Personal Account."))
+            nd = ask("Linked account email",
+                     default=cfg.get("account_email", "")).strip()
+            cfg["account_email"] = nd
+            tag_info(f"Personal account → {nd or '(cleared, using default pool)'}")
+            time.sleep(0.6)
+
+        elif choice == "10":
             save_config(cfg)
             pause()
             return cfg
@@ -1493,7 +1567,7 @@ def do_configure(cfg):
             return cfg
 
         else:
-            tag_warn("Invalid option – choose 1-9 or 0 to discard.")
+            tag_warn("Invalid option – choose 1-9, 10, or 0 to discard.")
             time.sleep(0.5)
 
 def main_menu(cfg):
@@ -1510,7 +1584,9 @@ def main_menu(cfg):
         print()
         menu_row("4", "🔄", "Force Re-Authenticate",   clr=C.BYLW)
         print()
-        menu_row("5", "🚪", "Exit",                     clr=C.BRED)
+        menu_row("5", "👤", "Link Personal Account",   clr=C.BMAG)
+        print()
+        menu_row("6", "🚪", "Exit",                     clr=C.BRED)
         print()
 
         hline("─", C.DIM + C.CYN)
@@ -1529,6 +1605,8 @@ def main_menu(cfg):
         elif choice == "4":
             do_force_reauth(cfg)
         elif choice == "5":
+            cfg = do_link_personal_account(cfg)
+        elif choice == "6":
             banner()
             print()
             dline(C.BMAG)
@@ -1540,7 +1618,7 @@ def main_menu(cfg):
             print()
             sys.exit(0)
         else:
-            tag_warn("Invalid option – choose 1 to 5.")
+            tag_warn("Invalid option – choose 1 to 6.")
             time.sleep(0.5)
 
 def main():
