@@ -99,7 +99,8 @@ python gplaydl_tui.py
    2   📱  Replace Device Profile
    3   ⚙   Configure
    4   🔄  Force Re-Authenticate
-   5   🚪  Exit
+   5   👤  Link Personal Account
+   6   🚪  Exit
 
   ───────────────────────────────────────────────────────────────
                       Created by GrayWizard
@@ -168,7 +169,9 @@ auth_arm64.json.bak before any changes are applied."
 | 5 | Architecture | arm64 · armv7 · or let gplaydl decide (default) |
 | 6 | Keystore | Path to .jks / .p12 / .pfx keystore file |
 | 7 | Sign APKs | Toggle APK signing on / off (requires keystore) |
-| 8 | Save & Return | save all changes to .config |
+| 8 | Auto Install APK | Open the Android installer automatically after download/sign |
+| 9 | Personal Account | Email of a linked gplaydl account (leave blank for default pool) |
+| 10 | Save & Return | save all changes to .config |
 | 0 | Discard & Return | Abandon all unsaved changes |
 
 ## 🔑 APK Signing
@@ -200,6 +203,35 @@ cookies and credentials remain untouched.
 
 ---
 
+## 👤 Personal Account Linking
+
+By default, gplaydl uses a shared anonymous token pool for downloads,
+which can hit rate limits. As of gplaydl 4.x, you can link your own
+Google account instead — the TUI has a guided menu option for this.
+
+> ⚠️ Google may flag or lock accounts used with unofficial clients.
+> Use a spare/burner Google account, never your primary one.
+
+**Setup (Main Menu → 5. Link Personal Account):**
+
+1. Install the [gplaydl Authenticator](https://github.com/rehmatworks/gplaydl-authenticator) app on any Android phone.
+2. Sign in with a spare Google account.
+3. Open **"Link gplaydl"** in the app to get a one-time pairing code.
+4. Back in the TUI, enter the pairing code when prompted — it runs
+   `gplaydl link --code XXXX` for you.
+5. Enter the email you signed in with, so the TUI can pass it to
+   gplaydl (`--email`) and select that account for downloads.
+
+This only affects your own device — the linked account and API key
+are stored locally at `~/.config/gplaydl/config.json` and are never
+part of this repository. Cloning this fork does not give anyone
+access to your linked account.
+
+To stop using a personal account, clear the email in
+**Configure → 9. Personal Account** (falls back to the default pool).
+
+---
+
 ## ⚙️ Configuration File
 
 All settings are persisted at $HOME/gplay/.config/gplaydl-tui/config.json:
@@ -209,6 +241,7 @@ All settings are persisted at $HOME/gplay/.config/gplaydl-tui/config.json:
   "prefer_split"  : "on",
   "output_dir"    : "/sdcard/APKs",
   "dispenser_link": "",
+  "account_email" : "",
   "skip_extras"   : "on",
   "arch"          : "",
   "keystore_path" : "/path/to/my.jks",
