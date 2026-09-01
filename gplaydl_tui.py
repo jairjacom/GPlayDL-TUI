@@ -456,9 +456,14 @@ def build_common_args(cfg):
     args = []
     if cfg.get("dispenser_link", "").strip():
         args += ["--dispenser", cfg["dispenser_link"].strip()]
-    if cfg.get("use_personal_account") == "on" and cfg.get("account_email", "").strip():
-        args += ["--email", cfg["account_email"].strip()]
     return args
+
+
+def build_account_args(cfg):
+    """--email is only accepted by gplaydl's `auth` and `download` subcommands."""
+    if cfg.get("use_personal_account") == "on" and cfg.get("account_email", "").strip():
+        return ["--email", cfg["account_email"].strip()]
+    return []
 
 
 def build_download_args(cfg):
@@ -1089,11 +1094,11 @@ def do_force_reauth(cfg):
     banner()
     section_header("Force Re-Authentication", "🔄")
     tag_warn("Clearing stored credentials…")
-    run_silent(["gplaydl", "auth", "--clear"] + build_common_args(cfg))
+    run_silent(["gplaydl", "auth", "--clear"] + build_common_args(cfg) + build_account_args(cfg))
     print()
     tag_info("Credentials cleared.  Starting fresh login…")
     hline()
-    run_cmd(["gplaydl", "auth"] + build_common_args(cfg))
+    run_cmd(["gplaydl", "auth"] + build_common_args(cfg) + build_account_args(cfg))
     reapply_device_profile(cfg)   # restore profile after fresh auth
     pause()
 
@@ -1264,6 +1269,7 @@ def do_search_download(cfg):
         ["gplaydl", "download", "--output", tmp_dir, pkg]
         + dl_after
         + build_common_args(cfg)
+        + build_account_args(cfg)
     )
 
     section_header(f"Downloading  ·  {pkg}", "⬇")
