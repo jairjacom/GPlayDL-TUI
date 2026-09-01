@@ -180,8 +180,9 @@ auth_arm64.json.bak before any changes are applied."
 | 6 | Keystore | Path to .jks / .p12 / .pfx keystore file |
 | 7 | Sign APKs | Toggle APK signing on / off (requires keystore) |
 | 8 | Auto Install APK | Open the Android installer automatically after download/sign |
-| 9 | Personal Account | Email of a linked gplaydl account (leave blank for default pool) |
-| 10 | Save & Return | save all changes to .config |
+| 9 | Personal Account | Email of a linked gplaydl account (set via Link Personal Account, or edit here) |
+| 10 | Use Personal Acct | Toggle whether searches/downloads use the linked account (ON) or the default shared pool (OFF) |
+| 11 | Save & Return | save all changes to .config |
 | 0 | Discard & Return | Abandon all unsaved changes |
 
 ## 🔑 APK Signing
