@@ -47,7 +47,9 @@ pip install gplaydl
 
 ### ⚙️ Manual Dependencies (Optional)
 
-Place these JAR files in ~/gplay/bin/ before first run
+The `bin/` folder lives next to `gplaydl_tui.py` — wherever you clone/run the
+script from is where it will look for and create `bin/`. Place `apksigner.jar`
+there before first run if you want signing support.
 
 | File | Purpose | Source |
 |---------|-------------|--|
@@ -75,19 +77,27 @@ python gplaydl_tui.py
 ```
 
 ## 📋 Project Structure
+
+All of this lives next to `gplaydl_tui.py`, wherever you cloned it:
+
 ```
-~/gplay/
+GPlayDL-TUI/                  ← the folder you cloned/run the script from
+├── gplaydl_tui.py
 ├── bin/
-│   ├── APKEditor.jar       ← auto-downloaded on first run
-│   └── apksigner.jar       ← place manually for signing support
+│   ├── APKEditor.jar        ← auto-downloaded on first run
+│   └── apksigner.jar        ← place manually for signing support
 ├── .config/
 │   └── gplaydl-tui/
-│       └── config.json     ← your saved settings
-└── <package.name>/         ← temp download folder (auto-cleaned)
+│       └── config.json      ← your saved settings
+└── <package.name>/          ← temp download/merge folder (auto-cleaned)
 
 ~/.config/gplaydl/
-└── auth_arm64.json         ← gplaydl authentication & device profile (gplaydl default fetched)
+└── auth_arm64.json          ← gplaydl authentication & device profile (gplaydl default fetched)
 ```
+
+Downloaded APKs go to your configured output directory (default `~/gplay`,
+set via Configure in the menu) — that's separate from the install folder above.
+
 ## 📖 Usage
 
 ```
