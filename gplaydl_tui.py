@@ -30,7 +30,8 @@ DEFAULT_CONFIG = {
     "prefer_split"   : "on",
     "output_dir"     : "",
     "dispenser_link" : "",
-    "account_email"  : "",   # empty = default dispenser pool, set = linked personal account via `gplaydl link`
+    "account_email"       : "",   # linked personal account email (saved via `gplaydl link`)
+    "use_personal_account": "off",   # on = pass --email and use linked account, off = default dispenser pool
     "skip_extras"    : "on",
     "arch"           : "",
     "keystore_path"  : "",
@@ -455,7 +456,7 @@ def build_common_args(cfg):
     args = []
     if cfg.get("dispenser_link", "").strip():
         args += ["--dispenser", cfg["dispenser_link"].strip()]
-    if cfg.get("account_email", "").strip():
+    if cfg.get("use_personal_account") == "on" and cfg.get("account_email", "").strip():
         args += ["--email", cfg["account_email"].strip()]
     return args
 
@@ -1143,8 +1144,11 @@ def do_link_personal_account(cfg):
 
     if email:
         cfg["account_email"] = email
+        cfg["use_personal_account"] = "on"
         save_config(cfg)
         tag_info(f"Personal account linked and saved → {email}")
+        tag_info("Use Personal Account switched ON for future requests.")
+        tag_warn("Toggle it off anytime via Configure → Use Personal Acct.")
     else:
         tag_warn("No email entered – account linked, but not set active.")
         tag_warn("Set it later via Configure → Personal Account.")
@@ -1442,11 +1446,20 @@ def do_configure(cfg):
         opt_row(
             "9", "👤", "Personal Account ",
             col(C.BCYN, cfg.get("account_email", "")
-                or col(C.DIM, "(not set – uses default dispenser pool)"))
+                or col(C.DIM, "(not set – use Link Personal Account first)"))
+        )
+
+        acct_set = bool(cfg.get("account_email", "").strip())
+        opt_row(
+            "10", "🔀", "Use Personal Acct",
+            badge_on_off(cfg.get("use_personal_account", "off")) +
+            (col(C.DIM + C.CYN, "  (email required)")
+             if not acct_set else
+             col(C.DIM + C.CYN, "  (off = default dispenser pool)"))
         )
 
         hline("─", C.CYN)
-        print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 10 ')}  💾  "
+        print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 11 ')}  💾  "
               f"{col(C.BGRN + C.BOLD, 'Save & Return')}")
         print()
         print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 0 ')}  ↩   "
@@ -1547,16 +1560,29 @@ def do_configure(cfg):
         elif choice == "9":
             print()
             print(col(C.DIM + C.CYN,
-                      "  Leave blank to use the default dispenser pool."))
+                      "  Leave blank to clear the saved account."))
             print(col(C.DIM + C.CYN,
                       "  New account? Use main menu → Link Personal Account."))
             nd = ask("Linked account email",
                      default=cfg.get("account_email", "")).strip()
             cfg["account_email"] = nd
-            tag_info(f"Personal account → {nd or '(cleared, using default pool)'}")
+            if not nd:
+                cfg["use_personal_account"] = "off"
+            tag_info(f"Personal account → {nd or '(cleared)'}")
             time.sleep(0.6)
 
         elif choice == "10":
+            if not cfg.get("account_email", "").strip():
+                tag_warn("Set a Personal Account email first (option 9).")
+            else:
+                cfg["use_personal_account"] = toggle_val(
+                    cfg.get("use_personal_account", "off"))
+                tag_info(
+                    f"Use Personal Account → "
+                    f"{badge_on_off(cfg['use_personal_account'])}")
+            time.sleep(0.8)
+
+        elif choice == "11":
             save_config(cfg)
             pause()
             return cfg
@@ -1567,7 +1593,7 @@ def do_configure(cfg):
             return cfg
 
         else:
-            tag_warn("Invalid option – choose 1-9, 10, or 0 to discard.")
+            tag_warn("Invalid option – choose 1-10, 11, or 0 to discard.")
             time.sleep(0.5)
 
 def main_menu(cfg):
