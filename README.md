@@ -1,7 +1,7 @@
 # GPlayDL-TUI
 
 <div align="center">
-    <img src="https://raw.githubusercontent.com/Graywizard888/GPlayDL-TUI/main/.images/Gplaydl_background.jpg" width="350px">
+    <img src="https://raw.githubusercontent.com/jairjacom/GPlayDL-TUI/main/.images/Gplaydl_background.jpg" width="350px">
 </div>
 
 
@@ -60,7 +60,7 @@ Place these JAR files in ~/gplay/bin/ before first run
 
 # 1. Clone the repository
 ```
-git clone https://github.com/Graywizard888/GPlayDL-TUI.git
+git clone https://github.com/jairjacom/GPlayDL-TUI.git
 cd GPlayDL-TUI
 ```
 
