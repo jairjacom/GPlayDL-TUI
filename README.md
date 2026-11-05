@@ -30,6 +30,7 @@
 | 🔧 **Auto jq Setup** | Detects and installs jq automatically if missing |
 | 📦 **Auto gplaydl Setup** | Installs and updates gplaydl via pip automatically |
 | 🎨 **Beautiful TUI** | Fully coloured terminal interface with progress bars and status indicators |
+| 🎨 **Color Themes** | Selectable truecolor themes applied instantly (works in Termux) |
 
 ---
 
@@ -182,8 +183,12 @@ auth_arm64.json.bak before any changes are applied."
 | 8 | Auto Install APK | Open the Android installer automatically after download/sign |
 | 9 | Personal Account | Email of a linked gplaydl account (set via Link Personal Account, or edit here) |
 | 10 | Use Personal Acct | Toggle whether searches/downloads use the linked account (ON) or the default shared pool (OFF) |
-| 11 | Save & Return | save all changes to .config |
+| 11 | Theme | Pick a color theme (live preview · applied instantly · truecolor) |
+| 12 | Save & Return | save all changes to .config |
 | 0 | Discard & Return | Abandon all unsaved changes |
+
+> 🎨 Themes apply instantly in the running TUI and use 24-bit truecolor
+> escapes — supported in Termux.
 
 ## 🔑 APK Signing
 

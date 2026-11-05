@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     "sign_apk"           : "off",
     "auto_install"       : "off",
     "device_profile_path": "",   # empty = disabled, no behaviour change
+    "theme"              : "default",
 }
 
 KEYSTORE_EXTS = (".jks", ".p12", ".pfx")
@@ -71,6 +72,131 @@ class C:
     BGBLK = "\033[40m"
     BGRED = "\033[41m"
     BGGRN = "\033[42m"
+
+
+def _hex_rgb(hex_str):
+    h = hex_str.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _fg(hex_str):
+    r, g, b = _hex_rgb(hex_str)
+    return f"\033[38;2;{r};{g};{b}m"
+
+
+def _bg(hex_str):
+    r, g, b = _hex_rgb(hex_str)
+    return f"\033[48;2;{r};{g};{b}m"
+
+
+THEMES = {
+    "default": {
+        "RST" : "\033[0m",
+        "BOLD": "\033[1m",
+        "DIM" : "\033[2m",
+        "BRED" : "\033[91m",
+        "BGRN" : "\033[92m",
+        "BYLW" : "\033[93m",
+        "BBLU" : "\033[94m",
+        "BMAG" : "\033[95m",
+        "BCYN" : "\033[96m",
+        "BWHT" : "\033[97m",
+        "CYN"  : "\033[36m",
+        "MAG"  : "\033[35m",
+        "YLW"  : "\033[33m",
+        "BGBLK": "\033[40m",
+        "BGRED": "\033[41m",
+        "BGGRN": "\033[42m",
+    },
+    "gruvbox-dark": {
+        "BRED" : _fg("#fb4934"),
+        "BGRN" : _fg("#b8bb26"),
+        "BYLW" : _fg("#fabd2f"),
+        "BBLU" : _fg("#83a598"),
+        "BMAG" : _fg("#d3869b"),
+        "BCYN" : _fg("#8ec07c"),
+        "BWHT" : _fg("#ebdbb2"),
+        "CYN"  : _fg("#689d6a"),
+        "MAG"  : _fg("#b16286"),
+        "YLW"  : _fg("#d79921"),
+        "BGBLK": _bg("#282828"),
+        "BGRED": _bg("#cc241d"),
+        "BGGRN": _bg("#98971a"),
+    },
+    "moonfly": {
+        "BRED" : _fg("#ff5189"),
+        "BGRN" : _fg("#36c692"),
+        "BYLW" : _fg("#c6c684"),
+        "BBLU" : _fg("#74b2ff"),
+        "BMAG" : _fg("#ae81ff"),
+        "BCYN" : _fg("#85dc85"),
+        "BWHT" : _fg("#e4e4e4"),
+        "CYN"  : _fg("#79dac8"),
+        "MAG"  : _fg("#cf87e8"),
+        "YLW"  : _fg("#e3c78a"),
+        "BGBLK": _bg("#080808"),
+        "BGRED": _bg("#ff5454"),
+        "BGGRN": _bg("#8cc85f"),
+    },
+    "miasma": {
+        "BRED" : _fg("#685742"),
+        "BGRN" : _fg("#5f875f"),
+        "BYLW" : _fg("#b36d43"),
+        "BBLU" : _fg("#78824b"),
+        "BMAG" : _fg("#bb7744"),
+        "BCYN" : _fg("#c9a554"),
+        "BWHT" : _fg("#d7c483"),
+        "CYN"  : _fg("#c9a554"),
+        "MAG"  : _fg("#bb7744"),
+        "YLW"  : _fg("#b36d43"),
+        "BGBLK": _bg("#222222"),
+        "BGRED": _bg("#685742"),
+        "BGGRN": _bg("#5f875f"),
+    },
+    "srcery": {
+        "BRED" : _fg("#f75341"),
+        "BGRN" : _fg("#98bc37"),
+        "BYLW" : _fg("#fed06e"),
+        "BBLU" : _fg("#68a8e4"),
+        "BMAG" : _fg("#ff5c8f"),
+        "BCYN" : _fg("#2be4d0"),
+        "BWHT" : _fg("#fce8c3"),
+        "CYN"  : _fg("#0aaeb3"),
+        "MAG"  : _fg("#e02c6d"),
+        "YLW"  : _fg("#fbb829"),
+        "BGBLK": _bg("#1c1b19"),
+        "BGRED": _bg("#ef2f27"),
+        "BGGRN": _bg("#519f50"),
+    },
+    "posterpole-gray": {
+        "BRED" : _fg("#bc8f8f"),
+        "BGRN" : _fg("#92a38f"),
+        "BYLW" : _fg("#d9ac8c"),
+        "BBLU" : _fg("#8a99a8"),
+        "BMAG" : _fg("#ccb3c6"),
+        "BCYN" : _fg("#aabbba"),
+        "BWHT" : _fg("#c6c0b9"),
+        "CYN"  : _fg("#8ea4a2"),
+        "MAG"  : _fg("#b894af"),
+        "YLW"  : _fg("#cc9166"),
+        "BGBLK": _bg("#1f1f1f"),
+        "BGRED": _bg("#a97070"),
+        "BGGRN": _bg("#778c73"),
+    },
+}
+
+
+def apply_theme(name):
+    # Reset every attribute to the default palette first so partial or
+    # future themes can never leak values from a previously applied theme.
+    for attr, value in THEMES["default"].items():
+        setattr(C, attr, value)
+    key = "".join(ch for ch in str(name).lower() if ch.isalnum())
+    for tname, tmap in THEMES.items():
+        if "".join(ch for ch in tname.lower() if ch.isalnum()) == key:
+            for attr, value in tmap.items():
+                setattr(C, attr, value)
+            return
 
 
 def col(code, text):
@@ -1464,8 +1590,13 @@ def do_configure(cfg):
              col(C.DIM + C.CYN, "  (off = default dispenser pool)"))
         )
 
+        opt_row(
+            "11", "🎨", "Theme            ",
+            col(C.BCYN, cfg.get("theme", "default"))
+        )
+
         hline("─", C.CYN)
-        print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 11 ')}  💾  "
+        print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 12 ')}  💾  "
               f"{col(C.BGRN + C.BOLD, 'Save & Return')}")
         print()
         print(f"  {col(C.BGBLK+C.BYLW+C.BOLD,' 0 ')}  ↩   "
@@ -1589,6 +1720,43 @@ def do_configure(cfg):
             time.sleep(0.8)
 
         elif choice == "11":
+            theme_keys = list(THEMES.keys())
+            print()
+            hline("─", C.CYN)
+            print(col(C.BOLD + C.BWHT, "  Color themes:"))
+            print()
+            for i, key in enumerate(theme_keys, 1):
+                th = THEMES[key]
+                cur = (col(C.BGRN, "  ● current")
+                       if cfg.get("theme", "default").strip().lower() == key.lower()
+                       else "")
+                pre = (f"{th['BGRN']}✔ ok{C.RST}  "
+                       f"{th['BYLW']}⚠ warn{C.RST}  "
+                       f"{th['BRED']}✖ err{C.RST}  "
+                       f"{th['BBLU']}◆ step{C.RST}")
+                print(f"  {col(C.BYLW, f'[{i}]')}  {col(C.BWHT, key)}{cur}")
+                print(f"       {pre}")
+            hline("─", C.CYN)
+            print()
+            tc = ask(f"Select theme [1-{len(theme_keys)}]",
+                     default="0").strip()
+            if tc == "0":
+                tag_info("Theme unchanged.")
+                time.sleep(0.6)
+            elif tc.isdigit() and 1 <= int(tc) <= len(theme_keys):
+                new_theme = theme_keys[int(tc) - 1]
+                if cfg.get("theme", "default") == new_theme:
+                    tag_info(f"Theme already set to {new_theme}.")
+                    time.sleep(0.6)
+                else:
+                    cfg["theme"] = new_theme
+                    apply_theme(new_theme)
+                    tag_info(f"Theme → {new_theme} (applied instantly)")
+            else:
+                tag_warn("Invalid option – keeping current theme.")
+                time.sleep(0.6)
+
+        elif choice == "12":
             save_config(cfg)
             pause()
             return cfg
@@ -1599,7 +1767,7 @@ def do_configure(cfg):
             return cfg
 
         else:
-            tag_warn("Invalid option – choose 1-10, 11, or 0 to discard.")
+            tag_warn("Invalid option – choose 1-11, 12, or 0 to discard.")
             time.sleep(0.5)
 
 def main_menu(cfg):
@@ -1658,6 +1826,7 @@ def main():
         os.makedirs(d, exist_ok=True)
     ensure_dependencies()
     cfg = load_config()
+    apply_theme(cfg.get("theme", "default"))
     main_menu(cfg)
 
 

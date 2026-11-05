@@ -1,0 +1,12 @@
+# Local runtime state (contains private settings/credentials)
+.config/
+
+# Auto-downloaded binaries (apksigner.jar stays tracked)
+bin/APKEditor.jar
+
+# Python
+__pycache__/
+*.pyc
+
+# Dev scratch space
+.scratch/
