@@ -23,7 +23,7 @@
 | 🔍 **Search & Download** | Search Google Play and download any app by name |
 | 📦 **Split APK Merge** | Automatically merges split APKs into a single installable APK using APKEditor |
 | ✍️ **APK Signing** | Sign merged APKs with your keystore using apksigner (V1 + V2 + V3) |
-| 📱 **Device Profile** | Replace the device profile used for downloads with any custom device |
+| 📱 **Device Profile** | Choose a bundled (incl. Android 17 / SDK 37) or custom device profile |
 | 📲 **Auto Install** | Automatically open the Android package installer after download |
 | ⚙️ **Full Configuration** | Persistent config for all settings saved between sessions |
 | ☕ **Auto JDK Setup** | Detects and installs openjdk-21 automatically if missing |
@@ -107,7 +107,7 @@ set via Configure in the menu) — that's separate from the install folder above
   ═══════════════════════════════════════════════════════════════
 
    1   🔍  Search & Download
-   2   📱  Replace Device Profile
+   2   📱  Device Profile
    3   ⚙   Configure
    4   🔄  Force Re-Authenticate
    5   👤  Link Personal Account
@@ -125,12 +125,28 @@ set via Configure in the menu) — that's separate from the install folder above
 3. Review app info and confirm the download
 4. The script handles the rest automatically
 
-# 2️⃣ Replace Device Profile
+# 2️⃣ Device Profile
 
-Spoof the device identity used when communicating with Google Play.
-Useful for downloading APKs targeting specific hardware or Android versions.
+Choose the device identity Google Play sees when downloading APKs. Useful for
+downloads targeting specific hardware, ABI or Android versions — especially
+apps that require **Android 16+ (SDK 36+)**. gplaydl's own bundled profiles all
+max out at SDK 35 (Android 15), so those apps get served outdated versions
+unless you pick a newer profile or mint a matching token.
 
-Accepted JSON input formats:
+### Bundled profiles
+
+The `profiles/` directory ships ready-to-use device profiles:
+
+| Profile | SDK | ABI |
+|---------|-----|-----|
+| 📱 Pixel 9 Pro XL · Android 17 | 37 | arm64-v8a |
+
+### Custom profiles
+
+The menu accepts **`.properties` files** (gplaydl device profiles) in addition
+to the JSON deviceInfoProvider formats:
+
+Accepted input formats:
 
 ```
 // ── Format 1 – Full auth.json style ──────────────────────────
@@ -166,8 +182,37 @@ Accepted JSON input formats:
   }
 }
 ```
-> "⚠️ A backup of your original auth file is always saved as
-auth_arm64.json.bak before any changes are applied."
+```
+// ── Format 4 – gplaydl .properties profile ───────────────────
+Build.HARDWARE=komodo
+Build.MODEL=Pixel 9 Pro XL
+Build.VERSION.SDK_INT=37
+...
+```
+
+### Minting a matching token (`M`)
+
+The **M** option POSTs the active profile's raw `.properties` dict to your
+linked dispenser's `/api/auth` endpoint. The dispenser replies with a complete
+auth dict **including a matching `gsfId`** — a genuine device identity
+registered at checkin, which a plain profile swap cannot produce on its own.
+Because this registers a new device identity for the account, the TUI will ask
+you to confirm first. It uses your linked dispenser
+(`~/.config/gplaydl/config.json`) and, when **Configure → Use Personal Acct**
+is ON, your personal account email.
+
+> ⚠️ A backup of your original auth file is always saved as
+> `auth-arm64.json.bak` before any changes are applied.
+
+### Known limitations
+
+- **Token auto-refresh reverts to SDK-35 profiles.** gplaydl refreshes tokens
+  every ~50 minutes and silently swaps the provider back to one of its bundled
+  SDK ≤ 35 profiles. Re-apply via **Menu → 2** (or re-mint via **2 → M**) after
+  a long session.
+- **The retry chain walks DOWN SDK versions.** If a download fails, gplaydl's
+  retry logic steps *down* through lower-SDK profiles, so an SDK-36+-only app
+  may still fail even after minting.
 
 # 3️⃣ Configure
 
@@ -215,7 +260,9 @@ different device. Common use cases:
 
 The script uses jq to surgically replace only the
 deviceInfoProvider block inside auth_arm64.json — all tokens,
-cookies and credentials remain untouched.
+cookies and credentials remain untouched. The **M (mint)** option is the
+exception: it writes a brand-new auth dict returned by the dispenser so that
+the profile pairs with a matching `gsfId` (see the Device Profile menu notes).
 
 ---
 

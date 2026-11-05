@@ -10,6 +10,7 @@ import re
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 
 HOME          = os.path.expanduser("~")
 GPLAY_DIR     = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +20,8 @@ CONFIG_FILE   = os.path.join(CONFIG_DIR, "config.json")
 APKEDITOR_JAR = os.path.join(BIN_DIR, "APKEditor.jar")
 APKSIGNER_JAR = os.path.join(BIN_DIR, "apksigner.jar")
 GPLAYDL_AUTH  = os.path.join(HOME, ".config", "gplaydl", "auth-arm64.json")
+DEVICE_PROFILES_DIR = os.path.join(GPLAY_DIR, "profiles")
+GPLAYDL_LINK_FILE   = os.path.join(os.path.expanduser("~/.config/gplaydl"), "config.json")
 
 ARCH_OPTIONS = {
     "0": "",
@@ -42,6 +45,7 @@ DEFAULT_CONFIG = {
     "sign_apk"           : "off",
     "auto_install"       : "off",
     "device_profile_path": "",   # empty = disabled, no behaviour change
+    "device_profile_minted": "", # "on" after minting a matching device identity via the dispenser
     "theme"              : "default",
 }
 
@@ -331,7 +335,27 @@ def status_bar(cfg):
     ins = (col(C.BGRN, "● INSTALL")
            if cfg.get("auto_install") == "on"
            else col(C.BRED, "○ INSTALL"))
+
+    try:
+        with open(GPLAYDL_AUTH, "r", encoding="utf-8") as fh:
+            auth_data = json.load(fh)
+        di = auth_data.get("deviceInfoProvider", {}) or {}
+        model   = (di.get("properties", {}) or {}).get("Build.MODEL", "unknown")
+        sdk_str = str(di.get("sdkVersion", "?"))
+        try:
+            sdk_int = int(sdk_str)
+        except (TypeError, ValueError):
+            sdk_int = 0
+        sdk_color = C.BGRN if sdk_int >= 36 else C.BYLW
+        dev_line = (
+            f"  Dev: {col(C.BCYN, model)} · "
+            f"SDK {col(sdk_color, sdk_str)}"
+        )
+    except Exception:
+        dev_line = f"  Dev: {col(C.DIM, '(no auth file)')}"
+
     hline("─", C.DIM + C.CYN)
+    print(dev_line)
     print(f"  {sp}   {sk}   {sig}   {ins}   Arch: {ar}   Out: {od}")
     hline("─", C.DIM + C.CYN)
 
@@ -613,6 +637,145 @@ def build_account_args(cfg):
     if cfg.get("use_personal_account") == "on" and cfg.get("account_email", "").strip():
         return ["--email", cfg["account_email"].strip()]
     return []
+
+
+def dispenser_link() -> tuple[str, str | None]:
+    """Return (base_url, api_key) from gplaydl's own link file.
+
+    The api_key is a credential and is never printed or logged.
+    """
+    base = "https://dispenser.gplaydl.com"
+    key  = None
+    try:
+        with open(GPLAYDL_LINK_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            disp = str(data.get("dispenser", "") or "").strip().rstrip("/")
+            if disp.endswith("/api/auth"):
+                disp = disp[: -len("/api/auth")]
+            if disp:
+                base = disp
+            key = data.get("api_key") or None
+    except Exception:
+        pass
+    return base, key
+
+
+def mint_token_for_profile(props, cfg) -> bool:
+    """POST *props* to the dispenser's /api/auth endpoint and persist the
+    minted auth dict (which carries a matching gsfId) to GPLAYDL_AUTH."""
+    base, key = dispenser_link()
+    email = None
+    if (cfg.get("use_personal_account") == "on" and
+            (cfg.get("account_email", "") or "").strip()):
+        email = cfg["account_email"].strip()
+
+    url = base + "/api/auth"
+    headers = {
+        "User-Agent": "com.aurora.store-4.6.1-70",
+        "Content-Type": "application/json",
+    }
+    if key:
+        headers["X-Api-Key"] = key
+
+    query = urllib.parse.urlencode({"email": email}) if email else ""
+    full_url = url + (("?" + query) if query else "")
+    body = json.dumps(props).encode("utf-8")
+
+    def _req():
+        return urllib.request.Request(
+            full_url, data=body, headers=headers, method="POST"
+        )
+
+    status = None
+    raw = b""
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(_req(), timeout=30) as resp:
+                status = resp.status
+                raw = resp.read()
+            break
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            raw = exc.read()
+            break
+        except Exception as exc:
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            tag_err(f"Mint request failed: {exc}")
+            return False
+
+    server_msg = f"dispenser returned HTTP {status}"
+    if raw:
+        try:
+            parsed    = json.loads(raw.decode("utf-8"))
+            server_msg = (parsed.get("error") or
+                          parsed.get("message") or server_msg)
+        except Exception:
+            pass
+
+    if status != 200:
+        if status in (401, 403, 404, 503):
+            tag_err(f"Dispenser refused the request ({status}): {server_msg}")
+        else:
+            tag_err(f"Dispenser returned HTTP {status}: {server_msg}")
+        return False
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        tag_err(f"Dispenser returned invalid JSON: {exc}")
+        return False
+
+    # Validate BEFORE touching disk: a valid mint must carry an authToken,
+    # a gsfId, and echo back exactly the device profile we sent.
+    if not data.get("authToken"):
+        tag_err("Dispenser response missing authToken — aborting, auth file untouched.")
+        return False
+    if not data.get("gsfId"):
+        tag_err("Dispenser response missing gsfId — aborting, auth file untouched.")
+        return False
+    resp_props = (data.get("deviceInfoProvider", {}) or {}).get("properties", {})
+    if resp_props.get("Build.FINGERPRINT", "") != props.get("Build.FINGERPRINT", ""):
+        tag_err("Dispenser did not accept this device profile — aborting, auth file untouched.")
+        return False
+
+    backup_path = GPLAYDL_AUTH + ".bak"
+    try:
+        shutil.copy2(GPLAYDL_AUTH, backup_path)
+    except Exception as exc:
+        tag_err("Could not back up the auth file before minting.")
+        tag_err(f"{exc}")
+        return False
+
+    data["_cached_at"] = time.time()
+    try:
+        tmp_auth = GPLAYDL_AUTH + ".tmp"
+        with open(tmp_auth, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        shutil.move(tmp_auth, GPLAYDL_AUTH)
+        os.chmod(GPLAYDL_AUTH, 0o600)
+    except Exception as exc:
+        tag_err(f"Failed to write minted auth: {exc}")
+        try:
+            shutil.copy2(backup_path, GPLAYDL_AUTH)
+            tag_warn("Original auth file restored from backup.")
+        except Exception:
+            pass
+        return False
+
+    cfg["device_profile_path"] = cfg.get("device_profile_path", "")
+    cfg["device_profile_minted"] = "on"
+    save_config(cfg)
+
+    model = props.get("Build.MODEL", "unknown")
+    sdk   = props.get("Build.VERSION.SDK_INT", "?")
+    tag_info(
+        f"Minted device identity → {col(C.BCYN, model)} (SDK {sdk}) "
+        f"· token: yes, gsfId: yes"
+    )
+    return True
 
 
 def build_download_args(cfg):
@@ -947,7 +1110,95 @@ def configure_keystore(cfg: dict) -> dict:
     return cfg
 
 
-def _validate_device_json(path: str) -> dict | None:
+def _load_properties_file(path):
+    """Parse a Java-style .properties device profile into a dict."""
+    props = {}
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            props[key] = val.replace("\\:", ":")
+    return props
+
+
+def properties_to_provider(props, mcc_mnc=""):
+    """Build the 5-key deviceInfoProvider dict from a properties dict."""
+    model       = props.get("Build.MODEL", "")
+    build_id    = props.get("Build.ID", "")
+    vending_str = props.get("Vending.versionString", "")
+    vending_ver = props.get("Vending.version", "")
+    sdk         = props.get("Build.VERSION.SDK_INT", "")
+    device      = props.get("Build.DEVICE", "")
+    hardware    = props.get("Build.HARDWARE", "")
+    product     = props.get("Build.PRODUCT", "")
+    release     = props.get("Build.VERSION.RELEASE", "")
+    abis        = props.get("Platforms", "").replace(",", ";")
+
+    user_agent = (
+        f"Android-Finsky/{vending_str} "
+        f"(api=3,versionCode={vending_ver},sdk={sdk},device={device},"
+        f"hardware={hardware},product={product},"
+        f"platformVersionRelease={release},model={urllib.parse.quote(model)},"
+        f"buildId={build_id},isWideScreen=0,supportedAbis={abis})"
+    )
+
+    return {
+        "properties": props,
+        "sdkVersion": sdk,
+        "authUserAgentString": f"GoogleAuth/1.4 ({model} {build_id})",
+        "userAgentString": user_agent,
+        "mccMnc": mcc_mnc or props.get("CellOperator", ""),
+    }
+
+
+def list_bundled_profiles() -> list[dict]:
+    """List DEVICE_PROFILES_DIR/*.properties, sorted by SDK descending."""
+    if not os.path.isdir(DEVICE_PROFILES_DIR):
+        return []
+    profiles = []
+
+    def sdk_key(p):
+        try:
+            return int(p.get("sdk") or "-1")
+        except (TypeError, ValueError):
+            return -1
+
+    for path in sorted(glob.glob(os.path.join(DEVICE_PROFILES_DIR, "*.properties"))):
+        try:
+            props = _load_properties_file(path)
+        except OSError:
+            continue
+        profiles.append({
+            "path": path,
+            "name": props.get("UserReadableName", os.path.basename(path)),
+            "model": props.get("Build.MODEL", "unknown"),
+            "sdk": props.get("Build.VERSION.SDK_INT", ""),
+            "arch": props.get("Platforms", ""),
+        })
+    profiles.sort(key=sdk_key, reverse=True)
+    return profiles
+
+
+def _current_mcc_mnc():
+    try:
+        with open(GPLAYDL_AUTH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return (data.get("deviceInfoProvider", {}) or {}).get("mccMnc", "")
+    except Exception:
+        return ""
+
+
+def _load_device_provider(path: str) -> dict | None:
+    if str(path).lower().endswith(".properties"):
+        try:
+            props = _load_properties_file(path)
+        except Exception as exc:
+            tag_err(f"Cannot read file: {exc}")
+            return None
+        return properties_to_provider(props, mcc_mnc=_current_mcc_mnc())
+
     try:
         with open(path, "r", encoding="utf-8") as fh:
             raw = fh.read().strip()
@@ -1025,9 +1276,41 @@ def reapply_device_profile(cfg: dict) -> bool:
     if not shutil.which("jq"):
         return False
 
-    provider = _validate_device_json(profile_path)
+    provider = _load_device_provider(profile_path)
     if provider is None:
         return False
+
+    new_props = provider.get("properties", {})
+    new_fp    = new_props.get("Build.FINGERPRINT", "")
+
+    # (i) Already applied?  Rewriting would clobber a dispenser-minted
+    # provider (which carries its own matching gsfId).
+    try:
+        with open(GPLAYDL_AUTH, "r", encoding="utf-8") as fh:
+            current = json.load(fh)
+        cur_fp = (
+            current.get("deviceInfoProvider", {})
+                   .get("properties", {})
+                   .get("Build.FINGERPRINT", "")
+        )
+        if new_fp and cur_fp == new_fp:
+            new_model = new_props.get("Build.MODEL", "unknown")
+            new_sdk   = provider.get("sdkVersion", "?")
+            tag_info(
+                f"Device profile already active → "
+                f"{col(C.BCYN, new_model)} (SDK {new_sdk})"
+            )
+            return True
+    except Exception:
+        pass
+
+    # (ii) One-time backup: never overwrite a previously minted backup.
+    backup_path = GPLAYDL_AUTH + ".bak"
+    if not os.path.exists(backup_path):
+        try:
+            shutil.copy2(GPLAYDL_AUTH, backup_path)
+        except Exception:
+            pass
 
     tmp_provider = os.path.join(CONFIG_DIR, "tmp_provider.json")
     tmp_out      = GPLAYDL_AUTH + ".tmp"
@@ -1050,8 +1333,9 @@ def reapply_device_profile(cfg: dict) -> bool:
             return False
 
         shutil.move(tmp_out, GPLAYDL_AUTH)
-        new_model = provider.get("properties", {}).get("Build.MODEL", "unknown")
-        tag_info(f"Device profile restored → {col(C.BCYN, new_model)}")
+        new_model = new_props.get("Build.MODEL", "unknown")
+        new_sdk   = provider.get("sdkVersion", "?")
+        tag_info(f"Device profile restored → {col(C.BCYN, new_model)} (SDK {new_sdk})")
         return True
 
     except Exception:
@@ -1064,9 +1348,168 @@ def reapply_device_profile(cfg: dict) -> bool:
                 pass
 
 
+def _apply_device_profile_path(cfg: dict, chosen_path: str) -> dict | None:
+    """Confirm and apply one chosen profile; returns updated cfg or None."""
+    provider = _load_device_provider(chosen_path)
+    if provider is None:
+        tag_err("Could not load the selected device profile.")
+        return None
+
+    new_model = provider.get("properties", {}).get("Build.MODEL", "unknown")
+    new_sdk   = provider.get("sdkVersion", "?")
+    new_abi   = provider.get("properties", {}).get("Platforms", "unknown")
+
+    print()
+    hline("─", C.CYN)
+    print(col(C.BOLD + C.BWHT, "  New device profile:"))
+    print(col(C.BCYN, f"    Model    : {new_model}"))
+    print(col(C.BCYN, f"    SDK      : {new_sdk}"))
+    print(col(C.BCYN, f"    ABI      : {new_abi}"))
+    hline("─", C.CYN)
+    print()
+
+    go = ask("Apply this device profile? [Y/n]", default="y").lower()
+    if go == "n":
+        tag_info("Cancelled – profile unchanged.")
+        return None
+
+    backup_path = GPLAYDL_AUTH + ".bak"
+    try:
+        shutil.copy2(GPLAYDL_AUTH, backup_path)
+        tag_info(f"Backup saved → {backup_path}")
+    except Exception as exc:
+        tag_warn(f"Could not create backup: {exc}")
+
+    tmp_provider = os.path.join(CONFIG_DIR, "tmp_provider.json")
+    try:
+        with open(tmp_provider, "w", encoding="utf-8") as fh:
+            json.dump(provider, fh, indent=2)
+    except Exception as exc:
+        tag_err(f"Failed to write temp provider file: {exc}")
+        return None
+
+    tmp_out = GPLAYDL_AUTH + ".tmp"
+    jq_cmd  = [
+        "jq",
+        "--slurpfile", "new", tmp_provider,
+        ".deviceInfoProvider = $new[0]",
+        GPLAYDL_AUTH,
+    ]
+
+    try:
+        with open(tmp_out, "w", encoding="utf-8") as out_fh:
+            result = subprocess.run(
+                jq_cmd,
+                stdout=out_fh,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        if result.returncode != 0:
+            tag_err("jq failed to process the auth file.")
+            err_text = result.stderr.strip()
+            if err_text:
+                tag_err(err_text)
+            try:
+                shutil.copy2(backup_path, GPLAYDL_AUTH)
+                tag_warn("Original auth file restored from backup.")
+            except Exception:
+                pass
+            return None
+
+        with open(tmp_out, "r", encoding="utf-8") as fh:
+            merged = json.load(fh)
+
+        written_model = (
+            merged.get("deviceInfoProvider", {})
+                  .get("properties", {})
+                  .get("Build.MODEL", "")
+        )
+        if not written_model:
+            tag_err("Merged JSON does not contain deviceInfoProvider.")
+            return None
+
+        shutil.move(tmp_out, GPLAYDL_AUTH)
+
+    except Exception as exc:
+        tag_err(f"Unexpected error during merge: {exc}")
+        return None
+    finally:
+        for f in (tmp_provider, tmp_out):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+    # Save path so it can be auto-restored before future gplaydl commands
+    cfg["device_profile_path"] = chosen_path
+    save_config(cfg)
+
+    print()
+    dline(C.BGRN)
+    print(col(C.BGRN + C.BOLD,
+              "  ✔  Device profile replaced!".center(tw())))
+    print(col(C.BCYN, f"  Model  : {new_model}"))
+    print(col(C.BCYN, f"  SDK    : {new_sdk}"))
+    print(col(C.BCYN, f"  ABI    : {new_abi}"))
+    print(col(C.BCYN, f"  Source : {chosen_path}"))
+    print(col(C.BCYN, f"  File   : {GPLAYDL_AUTH}"))
+    print(col(C.DIM + C.BCYN, f"  Backup : {backup_path}"))
+    tag_info("Profile path saved — will auto-restore before every gplaydl command.")
+    dline(C.BGRN)
+    pause()
+    return cfg
+
+
+def _browse_custom_profile(cfg: dict) -> dict | None:
+    hline("─", C.CYN)
+    print(col(C.BWHT,
+              "  Provide a device profile file (JSON or .properties)."))
+    print(col(C.DIM + C.CYN, "  Accepted layouts:"))
+    print(col(C.DIM + C.CYN, '    • { "deviceInfoProvider": { … } }'))
+    print(col(C.DIM + C.CYN, '    • { "authUserAgentString": …, "properties": { … }, … }'))
+    print(col(C.DIM + C.CYN, '    • "deviceInfoProvider": { … }   (partial snippet)'))
+    print(col(C.DIM + C.CYN, '    • a gplaydl .properties device profile'))
+    hline("─", C.CYN)
+    print()
+
+    raw_path = ask("Path to device profile file").strip()
+    if not raw_path:
+        tag_warn("No path entered – returning to menu.")
+        return None
+
+    custom_path = os.path.expanduser(raw_path)
+    if not os.path.exists(custom_path):
+        tag_err(f"File not found: {custom_path}")
+        return None
+
+    return _apply_device_profile_path(cfg, custom_path)
+
+
+def _mint_active_profile(cfg):
+    active_path = (cfg.get("device_profile_path", "") or "").strip()
+    if not active_path or not os.path.exists(active_path):
+        tag_warn("No active profile — select or apply one first.")
+        return
+    provider = _load_device_provider(active_path)
+    if provider is None:
+        return
+    props = provider.get("properties") or {}
+    if not props:
+        tag_err("Active profile has no properties block to mint.")
+        return
+    tag_warn("This contacts the dispenser and registers a new device")
+    tag_warn("identity for the account.")
+    go = ask("Mint a matching token now? [Y/n]", default="y").lower()
+    if go == "n":
+        tag_info("Cancelled – no changes made.")
+        return
+    mint_token_for_profile(props, cfg)
+
+
 def do_replace_device_profile(cfg: dict) -> dict:
     banner()
-    section_header("Modify Device Profile", "📱")
+    section_header("Device Profile", "📱")
 
     if not shutil.which("jq"):
         tag_err("jq is not installed.")
@@ -1101,142 +1544,61 @@ def do_replace_device_profile(cfg: dict) -> dict:
     except Exception:
         tag_warn("Could not read current auth file.")
 
-    print()
-    hline("─", C.CYN)
-    print(col(C.BWHT,
-              "  Provide a JSON file that contains a deviceInfoProvider block."))
-    print(col(C.DIM + C.CYN, "  Accepted layouts:"))
-    print(col(C.DIM + C.CYN, '    • { "deviceInfoProvider": { … } }'))
-    print(col(C.DIM + C.CYN, '    • { "authUserAgentString": …, "properties": { … }, … }'))
-    print(col(C.DIM + C.CYN, '    • "deviceInfoProvider": { … }   (partial snippet)'))
-    hline("─", C.CYN)
-    print()
+    while True:
+        bundled = list_bundled_profiles()
+        active_path = (cfg.get("device_profile_path", "") or "").strip()
 
-    raw_path = ask("Path to device JSON file").strip()
-    if not raw_path:
-        tag_warn("No path entered – returning to main menu.")
-        return cfg
-
-    json_path = os.path.expanduser(raw_path)
-
-    if not os.path.exists(json_path):
-        tag_err(f"File not found: {json_path}")
-        pause()
-        return cfg
-
-    provider = _validate_device_json(json_path)
-    if provider is None:
-        pause()
-        return cfg
-
-    new_model = provider.get("properties", {}).get("Build.MODEL", "unknown")
-    new_sdk   = provider.get("sdkVersion", "?")
-    new_abi   = provider.get("properties", {}).get("Platforms", "unknown")
-
-    print()
-    hline("─", C.CYN)
-    print(col(C.BOLD + C.BWHT, "  New device profile:"))
-    print(col(C.BCYN, f"    Model    : {new_model}"))
-    print(col(C.BCYN, f"    SDK      : {new_sdk}"))
-    print(col(C.BCYN, f"    ABI      : {new_abi}"))
-    hline("─", C.CYN)
-    print()
-
-    go = ask("Apply this device profile? [Y/n]", default="y").lower()
-    if go == "n":
-        tag_info("Cancelled – profile unchanged.")
-        pause()
-        return cfg
-
-    backup_path = GPLAYDL_AUTH + ".bak"
-    try:
-        shutil.copy2(GPLAYDL_AUTH, backup_path)
-        tag_info(f"Backup saved → {backup_path}")
-    except Exception as exc:
-        tag_warn(f"Could not create backup: {exc}")
-
-    tmp_provider = os.path.join(CONFIG_DIR, "tmp_provider.json")
-    try:
-        with open(tmp_provider, "w", encoding="utf-8") as fh:
-            json.dump(provider, fh, indent=2)
-    except Exception as exc:
-        tag_err(f"Failed to write temp provider file: {exc}")
-        pause()
-        return cfg
-
-    tmp_out  = GPLAYDL_AUTH + ".tmp"
-    jq_cmd   = [
-        "jq",
-        "--slurpfile", "new", tmp_provider,
-        ".deviceInfoProvider = $new[0]",
-        GPLAYDL_AUTH,
-    ]
-
-    try:
-        with open(tmp_out, "w", encoding="utf-8") as out_fh:
-            result = subprocess.run(
-                jq_cmd,
-                stdout=out_fh,
-                stderr=subprocess.PIPE,
-                text=True,
+        print()
+        hline("─", C.CYN)
+        print(col(C.BOLD + C.BWHT, "  Bundled device profiles:"))
+        print()
+        for i, prof in enumerate(bundled, 1):
+            mark = ""
+            if (active_path and
+                    os.path.abspath(prof["path"]) == os.path.abspath(active_path)):
+                mark = "  " + col(C.BGRN, "◀ active")
+            detail = col(C.DIM + C.CYN,
+                         f" · SDK {prof['sdk']} · {prof['arch']}")
+            print(
+                f"  {col(C.BYLW, f'[{i}]')}  📱  "
+                f"{col(C.BWHT, prof['name'])}{detail}{mark}"
             )
+        print()
+        print(f"  {col(C.BYLW, '[B]')}  📂  Browse custom path "
+              f"{col(C.DIM + C.CYN, '(JSON or .properties)')}")
+        print(f"  {col(C.BYLW, '[M]')}  🪙  Mint a matching token for the "
+              f"{col(C.DIM + C.CYN, 'active profile')}")
+        print(f"  {col(C.BYLW, '[0]')}  ↩   Cancel")
+        hline("─", C.CYN)
+        print()
 
-        if result.returncode != 0:
-            tag_err("jq failed to process the auth file.")
-            err_text = result.stderr.strip()
-            if err_text:
-                tag_err(err_text)
-            try:
-                shutil.copy2(backup_path, GPLAYDL_AUTH)
-                tag_warn("Original auth file restored from backup.")
-            except Exception:
-                pass
+        choice = ask("Select option").strip()
+
+        if choice == "0":
+            tag_info("Returning to main menu.")
             pause()
             return cfg
 
-        with open(tmp_out, "r", encoding="utf-8") as fh:
-            merged = json.load(fh)
+        if choice.upper() == "B":
+            result = _browse_custom_profile(cfg)
+            if result is not None:
+                return result
+            continue
 
-        written_model = (
-            merged.get("deviceInfoProvider", {})
-                  .get("properties", {})
-                  .get("Build.MODEL", "")
-        )
-        if not written_model:
-            tag_err("Merged JSON does not contain deviceInfoProvider.")
-            pause()
-            return cfg
+        if choice.upper() == "M":
+            _mint_active_profile(cfg)
+            continue
 
-        shutil.move(tmp_out, GPLAYDL_AUTH)
+        if choice.isdigit() and bundled:
+            idx = int(choice) - 1
+            if 0 <= idx < len(bundled):
+                result = _apply_device_profile_path(cfg, bundled[idx]["path"])
+                if result is not None:
+                    return result
+                continue
 
-    except Exception as exc:
-        tag_err(f"Unexpected error during merge: {exc}")
-        pause()
-        return cfg
-    finally:
-        for f in (tmp_provider, tmp_out):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-
-    # Save path so it can be auto-restored before future gplaydl commands
-    cfg["device_profile_path"] = json_path
-    save_config(cfg)
-
-    print()
-    dline(C.BGRN)
-    print(col(C.BGRN + C.BOLD,
-              "  ✔  Device profile replaced!".center(tw())))
-    print(col(C.BCYN, f"  Model  : {new_model}"))
-    print(col(C.BCYN, f"  SDK    : {new_sdk}"))
-    print(col(C.BCYN, f"  ABI    : {new_abi}"))
-    print(col(C.BCYN, f"  File   : {GPLAYDL_AUTH}"))
-    print(col(C.DIM + C.BCYN, f"  Backup : {backup_path}"))
-    tag_info("Profile path saved — will auto-restore before every gplaydl command.")
-    dline(C.BGRN)
-    pause()
-    return cfg
+        tag_warn("Invalid option – choose a number, B, M, or 0.")
+        time.sleep(0.5)
 
 
 def do_force_reauth(cfg):
@@ -1249,6 +1611,9 @@ def do_force_reauth(cfg):
     hline()
     run_cmd(["gplaydl", "auth"] + build_common_args(cfg) + build_account_args(cfg))
     reapply_device_profile(cfg)   # restore profile AFTER fresh auth rewrites the file
+    if cfg.get("device_profile_minted") == "on":
+        tag_warn("Auth was re-minted by gplaydl with a default profile — "
+                 "re-mint via menu 2 → M to restore the SDK 37 identity.")
     pause()
 
 
@@ -1805,7 +2170,7 @@ def main_menu(cfg):
 
         menu_row("1", "🔍", "Search & Download",      clr=C.BGRN)
         print()
-        menu_row("2", "📱", "Replace Device Profile",  clr=C.BCYN)
+        menu_row("2", "📱", "Device Profile",  clr=C.BCYN)
         print()
         menu_row("3", "⚙ ", "Configure",               clr=C.BBLU)
         print()

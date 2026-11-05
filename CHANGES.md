@@ -1,5 +1,69 @@
 # GPlayDL-TUI — Changes Log
 
+## Android 16+ / SDK 36+ Device Profile Support
+**Date:** 2026-11-05
+
+---
+
+### Problem
+
+All gplaydl bundled device profiles max out at SDK 35 (Android 15), so apps
+requiring Android 16+ get served old versions. A plain `deviceInfoProvider`
+swap in the auth file only changes the User-Agent claim — the real fix is to
+POST the profile's raw properties dict to the dispenser's `/api/auth` endpoint,
+which returns a complete auth dict including a matching `gsfId` (a genuine
+device identity registered at checkin).
+
+---
+
+### Changes
+
+#### `profiles/komodo_sdk37_arm64.properties` (new)
+
+A bundled SDK 37 (Android 17) device profile captured from a real Pixel 9
+Pro XL (`komodo`): `Build.VERSION.SDK_INT=37`, `Build.VERSION.RELEASE=17`,
+`Platforms=arm64-v8a`, plus the host-captured Features (164) and
+SharedLibraries (50). The SPDX/Calyx GPL-3.0 header is retained.
+
+#### `gplaydl_tui.py`
+
+- New helpers: `_load_properties_file`, `properties_to_provider`,
+  `list_bundled_profiles`, `dispenser_link`, `mint_token_for_profile`.
+- `_validate_device_json` renamed to `_load_device_provider`; it now converts
+  `.properties` files into a 5-key provider, mirroring gplaydl's
+  `Android-Finsky/…` User-Agent format.
+- `reapply_device_profile` now skips rewriting when the fingerprint already
+  matches (protects a dispenser-minted provider), creates a one-time `.bak`,
+  and reports the SDK.
+- `do_replace_device_profile` is now a picker: numbered bundled profiles
+  (`◀ active` marker), `[B]` browse custom `.json`/`.properties`, `[M]` mint,
+  `[0]` cancel.
+- New `[M]` mint flow POSTs the profile to the linked dispenser, validates the
+  response before touching disk, persists atomically with `0600` perms, and
+  saves `device_profile_minted=on`.
+- `status_bar` shows `Dev: <model> · SDK <n>` (green when ≥ 36, yellow below).
+- Main menu item 2 relabelled **Device Profile**.
+- `do_force_reauth` warns when a re-mint is needed after gplaydl's refresh.
+
+#### `README.md`
+
+Documented bundled profiles, `.properties` custom input, the `[M]` mint
+option, and known limitations (50-minute auto-refresh reverts profiles; the
+retry chain walks DOWN SDK versions).
+
+---
+
+### Verification
+
+- `python -m py_compile gplaydl_tui.py` — passes.
+- Theme smoke test (`apply_theme` over all themes) — passes.
+- Key parity vs `gplaydl.profiles._ALL['Pv']['profile']` — no missing/extra keys.
+- Converter contract — UA contains `sdk=37`, `platformVersionRelease=17`,
+  `supportedAbis=arm64-v8a`.
+- Synthetic jq merge — tokens survive the provider swap (`"37"`,
+  `"Pixel 9 Pro XL"`, `"DUMMY"`).
+- Boot render smoke tests — renders without side effects.
+
 ## Color Themes
 **Date:** 2026-11-04
 
