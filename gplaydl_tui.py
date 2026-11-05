@@ -632,9 +632,28 @@ def build_common_args(cfg):
     return args
 
 
+def _fresh_auth_cached() -> bool:
+    """True when the cached auth token is still fresh (gplaydl's 50-min window)."""
+    try:
+        with open(GPLAYDL_AUTH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return bool(data.get("authToken")) and \
+            (time.time() - data.get("_cached_at", 0)) < 50 * 60
+    except Exception:
+        return False
+
+
 def build_account_args(cfg):
-    """--email is only accepted by gplaydl's `auth` and `download` subcommands."""
+    """--email is only accepted by gplaydl's `auth` and `download` subcommands.
+
+    gplaydl's ensure_auth() ALWAYS fetches a fresh token when --email is
+    passed (its cache is ignored), re-minting with gplaydl's own SDK-35
+    profiles and wiping a minted device identity.  When a fresh minted
+    token is cached, skip --email so the cached identity is used instead.
+    """
     if cfg.get("use_personal_account") == "on" and cfg.get("account_email", "").strip():
+        if cfg.get("device_profile_minted") == "on" and _fresh_auth_cached():
+            return []
         return ["--email", cfg["account_email"].strip()]
     return []
 
@@ -1304,6 +1323,15 @@ def reapply_device_profile(cfg: dict) -> bool:
     except Exception:
         pass
 
+    # (i-b) Identity reverted by a token refresh (gplaydl re-mints with its
+    # own SDK-35 profiles)?  Re-mint so the gsfId matches the profile again.
+    # Only when the user opted in via menu 2 -> [M].
+    if cfg.get("device_profile_minted") == "on":
+        tag_warn("Minted identity was reverted by a token refresh — re-minting…")
+        if mint_token_for_profile(new_props, cfg):
+            return True
+        tag_warn("Re-mint failed – falling back to profile reapply (UA only).")
+
     # (ii) One-time backup: never overwrite a previously minted backup.
     backup_path = GPLAYDL_AUTH + ".bak"
     if not os.path.exists(backup_path):
@@ -1610,10 +1638,7 @@ def do_force_reauth(cfg):
     tag_info("Credentials cleared.  Starting fresh login…")
     hline()
     run_cmd(["gplaydl", "auth"] + build_common_args(cfg) + build_account_args(cfg))
-    reapply_device_profile(cfg)   # restore profile AFTER fresh auth rewrites the file
-    if cfg.get("device_profile_minted") == "on":
-        tag_warn("Auth was re-minted by gplaydl with a default profile — "
-                 "re-mint via menu 2 → M to restore the SDK 37 identity.")
+    reapply_device_profile(cfg)   # restore minted identity AFTER fresh auth rewrites the file
     pause()
 
 

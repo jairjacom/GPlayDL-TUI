@@ -43,12 +43,20 @@ SharedLibraries (50). The SPDX/Calyx GPL-3.0 header is retained.
   saves `device_profile_minted=on`.
 - `status_bar` shows `Dev: <model> · SDK <n>` (green when ≥ 36, yellow below).
 - Main menu item 2 relabelled **Device Profile**.
-- `do_force_reauth` warns when a re-mint is needed after gplaydl's refresh.
+- `do_force_reauth` restores the minted identity automatically after a fresh
+  `gplaydl auth` (via the reapply self-heal below).
+- **Self-heal (found in live testing):** gplaydl's `ensure_auth()` always
+  fetches fresh when `--email` is passed, which re-minted with SDK-35 profiles
+  and wiped the minted identity on every download. Fixes: `build_account_args`
+  skips `--email` while a fresh (< 50 min) minted token is cached, and
+  `reapply_device_profile` auto re-mints when it detects a reverted identity
+  (`device_profile_minted=on` only). Verified: identity stays SDK 37 across a
+  full download cycle.
 
 #### `README.md`
 
 Documented bundled profiles, `.properties` custom input, the `[M]` mint
-option, and known limitations (50-minute auto-refresh reverts profiles; the
+option, and known limitations (auto-refresh reverts are now self-healed; the
 retry chain walks DOWN SDK versions).
 
 ---

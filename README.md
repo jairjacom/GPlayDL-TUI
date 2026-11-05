@@ -206,10 +206,13 @@ is ON, your personal account email.
 
 ### Known limitations
 
-- **Token auto-refresh reverts to SDK-35 profiles.** gplaydl refreshes tokens
-  every ~50 minutes and silently swaps the provider back to one of its bundled
-  SDK ≤ 35 profiles. Re-apply via **Menu → 2** (or re-mint via **2 → M**) after
-  a long session.
+- **Token auto-refresh reverts to SDK-35 profiles — but the TUI self-heals.**
+  gplaydl refreshes tokens every ~50 minutes (and *always* when `--email` is
+  passed) and silently swaps the provider back to one of its bundled SDK ≤ 35
+  profiles. The TUI counters this: while a fresh minted token is cached it
+  skips `--email` (so gplaydl uses the cached identity), and whenever a
+  reverted identity is detected before a command it automatically re-mints.
+  Cost: one dispenser call per ~50-minute window of active use.
 - **The retry chain walks DOWN SDK versions.** If a download fails, gplaydl's
   retry logic steps *down* through lower-SDK profiles, so an SDK-36+-only app
   may still fail even after minting.
