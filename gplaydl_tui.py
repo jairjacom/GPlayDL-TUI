@@ -350,11 +350,34 @@ def load_config():
     return dict(DEFAULT_CONFIG)
 
 
-def save_config(cfg):
+def _write_config(data):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(CONFIG_FILE, "w") as fh:
-        json.dump(cfg, fh, indent=2)
-    tag_info(f"Config saved → {CONFIG_FILE}")
+        json.dump(data, fh, indent=2)
+
+
+def save_config(cfg, quiet=False):
+    _write_config(cfg)
+    if not quiet:
+        tag_info(f"Config saved → {CONFIG_FILE}")
+
+
+def persist_theme(name):
+    """Save ONLY the theme key, leaving other pending Configure edits unsaved."""
+    disk = {}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE) as fh:
+                saved = json.load(fh)
+            if isinstance(saved, dict):
+                disk = saved
+        except Exception:
+            disk = {}
+    disk["theme"] = name
+    try:
+        _write_config(disk)
+    except Exception:
+        tag_warn("Could not persist theme to config.")
 
 
 def run_silent(cmd, **kw):
@@ -1753,7 +1776,9 @@ def do_configure(cfg):
                 else:
                     cfg["theme"] = new_theme
                     apply_theme(new_theme)
-                    tag_info(f"Theme → {new_theme} (applied instantly)")
+                    persist_theme(new_theme)
+                    tag_info(f"Theme → {new_theme} (applied & saved)")
+                    time.sleep(0.8)
             else:
                 tag_warn("Invalid option – keeping current theme.")
                 time.sleep(0.6)
@@ -1826,9 +1851,9 @@ def main_menu(cfg):
 def main():
     for d in (GPLAY_DIR, BIN_DIR, CONFIG_DIR):
         os.makedirs(d, exist_ok=True)
-    ensure_dependencies()
     cfg = load_config()
-    apply_theme(cfg.get("theme", "default"))
+    apply_theme(cfg.get("theme", "default"))   # must precede any banner() render
+    ensure_dependencies()
     main_menu(cfg)
 
 
