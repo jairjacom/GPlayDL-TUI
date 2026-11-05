@@ -992,7 +992,7 @@ def _validate_device_json(path: str) -> dict | None:
 
 
 def reapply_device_profile(cfg: dict) -> bool:
-    """Re-inject the saved device profile after gplaydl token refreshes reset it.
+    """Re-inject the saved device profile before gplaydl commands run (and after fresh auth), so a command that triggers a token refresh never uses the dispenser's stale default profile.
     Does nothing (returns False silently) when device_profile_path is not set."""
     profile_path = cfg.get("device_profile_path", "").strip()
     if not profile_path or not os.path.exists(profile_path):
@@ -1197,7 +1197,7 @@ def do_replace_device_profile(cfg: dict) -> dict:
             except OSError:
                 pass
 
-    # Save path so it can be auto-restored after future token refreshes
+    # Save path so it can be auto-restored before future gplaydl commands
     cfg["device_profile_path"] = json_path
     save_config(cfg)
 
@@ -1210,7 +1210,7 @@ def do_replace_device_profile(cfg: dict) -> dict:
     print(col(C.BCYN, f"  ABI    : {new_abi}"))
     print(col(C.BCYN, f"  File   : {GPLAYDL_AUTH}"))
     print(col(C.DIM + C.BCYN, f"  Backup : {backup_path}"))
-    tag_info("Profile path saved — will auto-restore after token refreshes.")
+    tag_info("Profile path saved — will auto-restore before every gplaydl command.")
     dline(C.BGRN)
     pause()
     return cfg
@@ -1225,7 +1225,7 @@ def do_force_reauth(cfg):
     tag_info("Credentials cleared.  Starting fresh login…")
     hline()
     run_cmd(["gplaydl", "auth"] + build_common_args(cfg) + build_account_args(cfg))
-    reapply_device_profile(cfg)   # restore profile after fresh auth
+    reapply_device_profile(cfg)   # restore profile AFTER fresh auth rewrites the file
     pause()
 
 
@@ -1259,6 +1259,7 @@ def do_link_personal_account(cfg):
         return cfg
 
     print()
+    reapply_device_profile(cfg)   # apply saved profile BEFORE link handshake
     link_ok = run_cmd(["gplaydl", "link", "--code", code]) == 0
     print()
 
@@ -1297,10 +1298,10 @@ def do_search_download(cfg):
         pause()
         return
 
+    reapply_device_profile(cfg)   # apply saved profile BEFORE search
     search_cmd = ["gplaydl", "search", query] + build_common_args(cfg)
     print()
     exit_code, captured = run_search_capture(search_cmd)
-    reapply_device_profile(cfg)   # restore profile if token refresh reset it
     print()
 
     if exit_code != 0:
@@ -1340,6 +1341,7 @@ def do_search_download(cfg):
 
     section_header(f"App Info  ·  {pkg}", "ℹ")
     hline("─", C.DIM + C.CYN)
+    reapply_device_profile(cfg)   # apply saved profile BEFORE info
     run_cmd(["gplaydl", "info", pkg] + build_common_args(cfg))
     hline("─", C.DIM + C.CYN)
 
@@ -1402,8 +1404,8 @@ def do_search_download(cfg):
     hline("─", C.DIM + C.CYN)
     print()
 
+    reapply_device_profile(cfg)   # apply saved profile BEFORE download (may trigger token refresh)
     dl_code = run_cmd(dl_cmd)
-    reapply_device_profile(cfg)   # restore profile if token refresh reset it
 
     print()
     hline("─", C.DIM + C.CYN)
