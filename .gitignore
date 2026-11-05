@@ -1,6 +1,10 @@
 # Local runtime state (contains private settings/credentials)
 .config/
 
+# On-device agent notes (never commit)
+AGENTS.md
+NOTES.md
+
 # Auto-downloaded binaries (apksigner.jar stays tracked)
 bin/APKEditor.jar
 
